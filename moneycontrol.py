@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 # https://www.moneycontrol.com/news/business/companies/reliance-...-12345678.html
 ARTICLE_URL = re.compile(r"^https://www\.moneycontrol\.com/news/business/[^\s?#]+-\d{8,}\.html$")
 WIDGET_ID = re.compile(r"\s*Id:\d+")
-SENTENCE_END = tuple(".!?:;\"'"')")
+SENTENCE_END = (".", "!", "?", ":", ";", '"', "'")
 
 
 def is_article_url(url: str) -> bool:
@@ -97,11 +97,16 @@ def parse(html: str) -> dict | None:
     """Parse moneycontrol article HTML and return article metadata."""
     soup = BeautifulSoup(html, "lxml")
 
-    # Find the main article headline
-    headline = soup.find("h1", class_="article-headline") or soup.find("h1")
+    # Find the main article headline - Moneycontrol uses artTitle
+    headline = (soup.find("h1", class_="artTitle") or
+                soup.find("h1", class_="article_title") or
+                soup.find("h1", class_="article-headline") or
+                soup.find("h1"))
 
-    # Find article body - Moneycontrol uses various container classes
-    body = (soup.select_one("div.article-content") or
+    # Find article body - Moneycontrol uses content_wrapper
+    body = (soup.select_one("div.content_wrapper") or
+            soup.select_one("div.arti-flow") or
+            soup.select_one("div.article-content") or
             soup.select_one("div.article-body") or
             soup.select_one("div.article-text") or
             soup.select_one("div.storyContent") or
