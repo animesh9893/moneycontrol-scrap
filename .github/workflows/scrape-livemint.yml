@@ -1,4 +1,4 @@
-name: Scrape Moneycontrol
+name: Scrape Livemint (Recursive)
 
 on:
   workflow_dispatch:
@@ -23,26 +23,25 @@ on:
           - '1'
           - '2'
           - '3'
-      runs_left:
-        description: 'Further runs to chain if URLs pending'
+      calls_left:
+        description: 'Recursion depth (how many times to cycle)'
         required: false
         default: '5'
         type: choice
         options:
           - '0'
+          - '1'
+          - '2'
+          - '3'
           - '5'
           - '10'
-          - '20'
-
-concurrency:
-  group: scrape
-  cancel-in-progress: false
 
 jobs:
-  scrape:
+  scrape_livemint:
     runs-on: ubuntu-latest
     permissions:
       actions: write
+
     steps:
       - uses: actions/checkout@v4
 
@@ -56,7 +55,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Scrape articles
+      - name: Scrape Livemint articles
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
@@ -65,16 +64,15 @@ jobs:
             --max-depth ${{ inputs.max_depth }} \
             --delay 0.5
 
-      - name: Chain next run if needed
-        if: failure() == false && env.pending != '0'
+      - name: Check if should call Moneycontrol
+        if: inputs.calls_left != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PENDING: ${{ env.pending }}
+          CALLS_LEFT: ${{ inputs.calls_left }}
         run: |
-          if [ "${{ inputs.runs_left }}" -gt "0" ]; then
-            gh workflow run scrape.yml \
-              -f max_pages=${{ inputs.max_pages }} \
-              -f max_depth=${{ inputs.max_depth }} \
-              -f runs_left=$((${{ inputs.runs_left }} - 1))
-            echo "Chained next run with $((${{ inputs.runs_left }} - 1)) runs left"
-          fi
+          echo "Triggering Moneycontrol workflow (calls_left: ${{ inputs.calls_left }})"
+          gh workflow run scrape-moneycontrol.yml \
+            --repo ${{ github.repository }} \
+            -f max_pages=${{ inputs.max_pages }} \
+            -f max_depth=${{ inputs.max_depth }} \
+            -f calls_left=$((${{ inputs.calls_left }} - 1))

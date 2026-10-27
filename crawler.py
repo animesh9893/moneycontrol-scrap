@@ -19,9 +19,13 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 import psycopg
 from bs4 import BeautifulSoup
 
+import livemint
 import moneycontrol
 
-PARSERS = {"moneycontrol": moneycontrol}
+PARSERS = {
+    "livemint": livemint,
+    "moneycontrol": moneycontrol
+}
 SCHEMA = Path(__file__).with_name("schema.sql")
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
