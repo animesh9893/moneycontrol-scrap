@@ -25,7 +25,11 @@ def meta(soup: BeautifulSoup, name: str) -> str:
 
 
 def to_datetime(value: str) -> datetime | None:
-    return datetime.fromisoformat(value) if value else None
+    # An odd date format should cost the date, not the whole article
+    try:
+        return datetime.fromisoformat(value) if value else None
+    except ValueError:
+        return None
 
 
 def is_heading(el) -> bool:

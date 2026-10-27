@@ -1,0 +1,61 @@
+name: Scrape news
+
+# One workflow for every source: crawler.py reads all rows in `sources`.
+# Each run is a worker that polls the feeds once a minute for ~28 minutes;
+# the schedule starts the next one. GitHub may start scheduled runs late, so
+# expect small gaps. For true always-on polling, run the same command on a
+# server instead:  python crawler.py --loop --interval 60 --max-depth 1
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      max_pages:
+        description: 'Pages to scrape per one-minute cycle'
+        required: false
+        default: '30'
+      max_depth:
+        description: 'Link hops to follow from the feeds (0 = feed items only)'
+        required: false
+        default: '1'
+      minutes:
+        description: 'How long this run keeps polling'
+        required: false
+        default: '28'
+
+# Never two workers at once; a run that is due while one is going waits for it
+concurrency:
+  group: scrape-news
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Poll feeds every minute
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MAX_PAGES: ${{ inputs.max_pages || '30' }}
+          MAX_DEPTH: ${{ inputs.max_depth || '1' }}
+          MINUTES: ${{ inputs.minutes || '28' }}
+        run: |
+          python -u crawler.py --loop \
+            --interval 60 \
+            --stop-after $((MINUTES * 60)) \
+            --max-pages "$MAX_PAGES" \
+            --max-depth "$MAX_DEPTH" \
+            --delay 0.5

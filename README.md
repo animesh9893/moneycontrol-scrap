@@ -18,20 +18,19 @@ RSS feeds ──► urls (pending, depth 0)
        └─ anything else ─────────► urls (skipped, never fetched)
 ```
 
-Each run of `crawler.py`:
+`crawler.py` applies `schema.sql` once at startup (idempotent, so the first run creates the tables), then runs one cycle, or one cycle every `--interval` seconds with `--loop`. Each cycle:
 
-1. Applies `schema.sql` (idempotent, so the first run creates the tables).
-2. Reads Moneycontrol's RSS feeds and queues article URLs at depth 0.
-3. Repeatedly claims the shallowest, oldest `pending` URL with `depth <= --max-depth`, scrapes it, saves it, and queues its body links at `depth + 1`, until `--max-pages` pages are processed or nothing is pending.
-4. Prints a summary and, in GitHub Actions, writes `pending=<n>` to `$GITHUB_OUTPUT` so the workflow can chain another run.
+1. Reads every source's RSS feeds (rows in `sources`) and queues new article URLs at depth 0.
+2. Repeatedly claims the shallowest, oldest `pending` URL with `depth <= --max-depth`, scrapes it, saves it, and queues its body links at `depth + 1`, until `--max-pages` pages are processed or nothing is pending.
+3. Prints a summary, including how many feeds failed.
 
 ### Crawl rules
 
 - **Scraped once:** `urls.url` is unique, and only `status = 'pending'` URLs are fetched. Once a URL is `done`, `skipped` or `failed`, it is never fetched again.
-- **URL normalization:** links resolve against the page they appear on, query strings and `#fragments` are dropped, and the host is lowercased.
+- **URL normalization:** links resolve against the page they appear on, query strings and `#fragments` are dropped, the host is lowercased, and `http` becomes `https`.
 - **Same site only:** only links on the same host as `sources.base_url` are recorded. Same-site pages that are not articles are stored as `skipped`.
 - **Depth:** depth 0 comes from RSS, and each link hop adds 1. A URL keeps the smallest depth it was ever found at.
-- **Failures:** a URL that errors goes back to `pending` and is retried on later runs. After 3 attempts it becomes `failed`.
+- **Failures:** a URL that errors goes back to `pending` and is retried after `attempts × 5` minutes. After 3 attempts it becomes `failed`. In `--loop` mode a cycle that fails (for example, the database is unreachable) is logged and the next cycle reconnects.
 - **Concurrency:** claims use `FOR UPDATE SKIP LOCKED`, so parallel crawlers never scrape the same URL.
 - **Politeness:** one request at a time, `--delay` seconds apart (default 1s).
 
@@ -64,6 +63,9 @@ python3 -m venv .venv
 # .env (git-ignored) holds: DATABASE_URL=postgresql://...?sslmode=require
 set -a; source .env; set +a
 ./.venv/bin/python crawler.py --max-pages 50 --max-depth 2
+
+# Worker: poll every source every minute until stopped
+./.venv/bin/python crawler.py --loop --interval 60 --max-depth 1
 ```
 
 | Flag | Default | Meaning |
@@ -71,10 +73,13 @@ set -a; source .env; set +a
 | `--max-pages` | 50 | Pages to process this run |
 | `--max-depth` | 2 | Deepest link hop to fetch |
 | `--delay` | 1.0 | Seconds between requests |
+| `--loop` | off | Keep running cycles |
+| `--interval` | 60 | Seconds from one cycle's start to the next |
+| `--stop-after` | 0 | With `--loop`, stop after this many seconds (0 = never) |
 
 ### GitHub Actions
 
-`.github/workflows/scrape.yml` runs only when triggered manually (**Actions → Scrape news → Run workflow**).
+`.github/workflows/scrape.yml` starts every 30 minutes (or manually: **Actions → Scrape news → Run workflow**) and runs the worker for 28 minutes, polling once a minute. A concurrency group keeps it to one worker at a time. GitHub can start scheduled runs late, so there may be gaps; for always-on polling run the worker on a server instead. On a private repo this uses about 1,450 Actions minutes a day.
 
 Setup:
 
@@ -87,7 +92,8 @@ Setup:
 |---|---|
 | `crawler.py` | Source-agnostic crawler: feeds, queue, fetching, saving, chunking |
 | `moneycontrol.py` | Moneycontrol parser; based on the livemint template |
-| `schema.sql` | Tables, indexes and source seed rows; applied on every run |
+| `livemint.py` | Livemint parser |
+| `schema.sql` | Tables, indexes and source seed rows; applied at startup |
 | `requirements.txt` | `beautifulsoup4`, `lxml`, `psycopg[binary]`, `feedparser` |
 
 ## Moneycontrol Article Structure
@@ -95,7 +101,7 @@ Setup:
 Moneycontrol articles are parsed from the following HTML structure:
 
 - **Headline:** `h1.article-headline` or generic `h1`
-- **Body:** `div.article-content`, `div.article-body`, `div.article-text`, or generic article containers
+- **Body:** `div.content_wrapper`, `div.arti-flow`, `div.article-content`, `div.article-body`, `div.article-text` or `div.storyContent` (no generic `<article>` fallback, so listing pages are skipped)
 - **Authors:** `span.author-name` or meta tag `author`
 - **Publish/Modified dates:** `article:published_time`, `article:modified_time` meta tags
 - **Section:** `article:section` meta tag
@@ -103,7 +109,7 @@ Moneycontrol articles are parsed from the following HTML structure:
 - **Summary:** `og:description` or `description` meta tag
 - **Tags:** `keywords` meta tag (comma-separated)
 
-Article URLs must match the pattern: `/news/business/...-\d{8,}\.html`
+Article URLs must match the pattern: `https://www.moneycontrol.com/news/...-\d{7,}\.html`
 
 ## Validation
 
@@ -121,10 +127,10 @@ To update the RSS feeds for Moneycontrol, run:
 ```sql
 UPDATE sources 
 SET feed_urls = ARRAY[
-    'https://www.moneycontrol.com/rss/markets',
-    'https://www.moneycontrol.com/rss/companies',
-    'https://www.moneycontrol.com/rss/news',
-    'https://www.moneycontrol.com/rss/trending'
+    'https://www.moneycontrol.com/rss/latestnews.xml',
+    'https://www.moneycontrol.com/rss/marketreports.xml',
+    'https://www.moneycontrol.com/rss/business.xml',
+    'https://www.moneycontrol.com/rss/buzzingstocks.xml'
 ]
 WHERE slug = 'moneycontrol';
 ```

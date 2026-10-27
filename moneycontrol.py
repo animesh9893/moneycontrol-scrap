@@ -7,8 +7,9 @@ from bs4 import BeautifulSoup
 
 # Moneycontrol article URLs follow patterns like:
 # https://www.moneycontrol.com/news/business/markets/sensex-nifty-....-12345678.html
-# https://www.moneycontrol.com/news/business/companies/reliance-...-12345678.html
-ARTICLE_URL = re.compile(r"^https://www\.moneycontrol\.com/news/business/[^\s?#]+-\d{8,}\.html$")
+# https://www.moneycontrol.com/news/india/...-12345678.html, /news/world/..., /news/trends/...
+# The crawler normalizes http to https before matching.
+ARTICLE_URL = re.compile(r"^https://www\.moneycontrol\.com/news/[^\s?#]+-\d{7,}\.html$")
 WIDGET_ID = re.compile(r"\s*Id:\d+")
 SENTENCE_END = (".", "!", "?", ":", ";", '"', "'")
 
@@ -60,14 +61,24 @@ def block_text(el) -> str:
     return clean(el.get_text())
 
 
+def inside_block(el, body) -> bool:
+    """True if el sits in a list or table within body; those are read whole."""
+    for parent in el.parents:
+        if parent is body:
+            return False
+        if parent.name in ("ul", "ol", "table"):
+            return True
+    return False
+
+
 def sections(body) -> list[dict]:
     """Group body blocks under their sub-headings."""
     result = [{"heading": None, "paragraphs": []}]
     previous_tag = None
 
     for el in body.find_all(["h2", "h3", "p", "ul", "ol", "table"]):
-        # Skip elements that are inside widgets or not in main content
-        if not el.get_text().strip():
+        # Skip empty blocks, and blocks already included in their list or table
+        if not el.get_text().strip() or inside_block(el, body):
             continue
 
         text = block_text(el)
@@ -103,15 +114,14 @@ def parse(html: str) -> dict | None:
                 soup.find("h1", class_="article-headline") or
                 soup.find("h1"))
 
-    # Find article body - Moneycontrol uses content_wrapper
+    # Find article body - Moneycontrol uses content_wrapper. Only article-specific
+    # containers: a generic <article> fallback would turn listing pages into "articles".
     body = (soup.select_one("div.content_wrapper") or
             soup.select_one("div.arti-flow") or
             soup.select_one("div.article-content") or
             soup.select_one("div.article-body") or
             soup.select_one("div.article-text") or
-            soup.select_one("div.storyContent") or
-            soup.select_one("article") or
-            soup.select_one("div[role='article']"))
+            soup.select_one("div.storyContent"))
 
     # If no headline or body, this is not an article
     if not body or not headline:
@@ -135,9 +145,8 @@ def parse(html: str) -> dict | None:
         meta(soup, "last-modified")
     )
 
-    # Extract section/category
-    section = (meta(soup, "article:section") or
-               meta(soup, "news_keywords") or None)
+    # Extract section/category (news_keywords holds tags, not a section)
+    section = meta(soup, "article:section") or None
 
     # Get image URL
     image_url = (meta(soup, "og:image") or

@@ -90,18 +90,30 @@ CREATE TABLE IF NOT EXISTS links (
     PRIMARY KEY (from_url_id, to_url_id)
 );
 
--- Seed moneycontrol source with available RSS feeds
--- Note: Moneycontrol may have limited RSS availability; feeds can be updated via SQL
+-- Seed sources. Each slug needs a parser module registered in crawler.PARSERS.
+-- Existing rows are left alone, so feed lists edited via SQL are kept.
 INSERT INTO sources (slug, name, base_url, feed_urls)
-VALUES (
-    'moneycontrol',
-    'Moneycontrol',
-    'https://www.moneycontrol.com',
-    ARRAY[
-        'https://www.moneycontrol.com/rss/markets',
-        'https://www.moneycontrol.com/rss/companies',
-        'https://www.moneycontrol.com/rss/news',
-        'https://www.moneycontrol.com/rss/trending'
-    ]
-)
+VALUES
+    (
+        'moneycontrol',
+        'Moneycontrol',
+        'https://www.moneycontrol.com',
+        ARRAY[
+            'https://www.moneycontrol.com/rss/latestnews.xml',
+            'https://www.moneycontrol.com/rss/marketreports.xml',
+            'https://www.moneycontrol.com/rss/business.xml',
+            'https://www.moneycontrol.com/rss/buzzingstocks.xml'
+        ]
+    ),
+    (
+        'livemint',
+        'Livemint',
+        'https://www.livemint.com',
+        ARRAY[
+            'https://www.livemint.com/rss/markets',
+            'https://www.livemint.com/rss/companies',
+            'https://www.livemint.com/rss/news',
+            'https://www.livemint.com/rss/money'
+        ]
+    )
 ON CONFLICT (slug) DO NOTHING;
